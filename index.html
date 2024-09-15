@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>街口支付測試頁面</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { padding-top: 20px; }
+        .section { 
+            background-color: #f8f9fa; 
+            border-radius: 5px; 
+            padding: 20px; 
+            margin-bottom: 20px;
+        }
+        .btn-group { 
+            margin-bottom: 15px; 
+        }
+        .form-control { 
+            margin-bottom: 10px; 
+        }
+        #qrCode {
+            text-align: center;
+            margin-top: 20px;
+        }
+        #qrCode img {
+            max-width: 95%;
+            height: auto;
+        }
+        .truncate {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 100%;
+            display: inline-block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="mb-4">街口支付測試頁面</h1>
+
+        <div class="row">
+            <div class="col-md-4">
+                <div class="section">
+                    <h2>創建訂單</h2>
+                    <div class="btn-group">
+                        <button id="createOrderBtn" class="btn btn-success">創建訂單</button>
+                    </div>
+                    <input type="number" id="createOrderAmount" class="form-control" placeholder="訂單金額" value="100">
+                    <div id="createOrderResult"></div>
+                    <div id="orderDetails" style="display:none;">
+                        <p>訂單編號: <span id="orderId"></span></p>
+                        <p>金額: <span id="orderAmount"></span> TWD</p>
+                        <p>付款URL: <a id="paymentUrl" href="#" target="_blank" class="truncate"></a></p>
+                    </div>
+                    <div id="qrCode"></div>
+                </div>
+            </div>
+
+            <div class="col-md-4">
+                <div class="section">
+                    <h2>查詢訂單</h2>
+                    <div class="btn-group">
+                        <button id="inquiryOrderBtn" class="btn btn-success">查詢訂單</button>
+                    </div>
+                    <input type="text" id="inquiryOrderIds" class="form-control" placeholder="訂單ID（多個ID用逗號分隔）">
+                    <div id="inquiryOrderResult"></div>
+                </div>
+            </div>
+
+            <div class="col-md-4">
+                <div class="section">
+                    <h2>退款</h2>
+                    <div class="btn-group">
+                        <button id="refundOrderBtn" class="btn btn-success">退款</button>
+                    </div>
+                    <input type="text" id="refundOrderId" class="form-control" placeholder="訂單ID">
+                    <input type="number" id="refundAmount" class="form-control" placeholder="退款金額">
+                    <input type="text" id="refundOrderIdOptional" class="form-control" placeholder="退款單號（選填）">
+                    <div id="refundOrderResult"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // 監聽用戶是否有回到頁面
+        document.addEventListener("visibilitychange", (event) => {
+            if (document.visibilityState === 'visible') {
+                window.location.reload();
+            }
+        });
+
+        // 調用後端API
+        async function callBackendAPI(action, data = {}) {
+            const formData = new FormData();
+            formData.append('action', action);
+            for (const key in data) {
+                formData.append(key, data[key]);
+            }
+
+            try {
+                const response = await fetch('jkopay-backend.php', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                return await response.json();
+            } catch (error) {
+                console.error('Error:', error);
+                return { result: 'error', message: error.message };
+            }
+        }
+
+        // 創建訂單
+        document.getElementById('createOrderBtn').onclick = async function() {
+            const amount = document.getElementById('createOrderAmount').value;
+            const result = await callBackendAPI('createOrder', { amount });
+            if (result.result === '000') {
+                document.getElementById('orderId').textContent = result.platform_order_id;
+                document.getElementById('orderAmount').textContent = amount;
+                const paymentUrlElement = document.getElementById('paymentUrl');
+                paymentUrlElement.href = result.result_object.payment_url;
+                paymentUrlElement.textContent = result.result_object.payment_url;
+                document.getElementById('orderDetails').style.display = 'block';
+                document.getElementById('qrCode').innerHTML = `<img src="${result.result_object.qr_img}" alt="QR Code">`;
+            } else {
+                document.getElementById('createOrderResult').innerHTML = `<span class="error">錯誤：${result.message}</span>`;
+            }
+        }
+
+        // 查詢訂單
+        document.getElementById('inquiryOrderBtn').onclick = async function() {
+            const orderIds = document.getElementById('inquiryOrderIds').value;
+            const result = await callBackendAPI('inquiryOrder', { orderIds: orderIds });
+            const resultElement = document.getElementById('inquiryOrderResult');
+            
+            if (result.result === '000') {
+                let html = '<h3>訂單查詢結果</h3>';
+                result.result_object.transactions.forEach(transaction => {
+                    html += `
+                        <div>
+                            <p>訂單編號: ${transaction.platform_order_id}</p>
+                            <p>狀態: ${transaction.status}</p>
+                            <p>交易時間: ${transaction.trans_time}</p>
+                            <p>最終金額: ${transaction.final_price}</p>
+                            <p>折抵金額: ${transaction.redeem_amount}</p>
+                            <p>實際扣款金額: ${transaction.debit_amount}</p>
+                        </div>
+                        <hr>
+                    `;
+                });
+                resultElement.innerHTML = html;
+            } else {
+                resultElement.innerHTML = `<span class="error">錯誤：${result.message}</span>`;
+            }
+        }
+
+        // 退款
+        document.getElementById('refundOrderBtn').onclick = async function() {
+            const orderId = document.getElementById('refundOrderId').value;
+            const amount = document.getElementById('refundAmount').value;
+            const refundOrderId = document.getElementById('refundOrderIdOptional').value;
+            console.log("Refunding order:", orderId, "amount:", amount, "refundOrderId:", refundOrderId);
+            const result = await callBackendAPI('refundOrder', { orderId, amount, refundOrderId });
+            console.log("Refund result:", result);
+            const resultElement = document.getElementById('refundOrderResult');
+            
+            if (result.result === '000') {
+                resultElement.innerHTML = `
+                    <h3>退款成功</h3>
+                    <p>退款交易序號: ${result.result_object.refund_tradeNo}</p>
+                    <p>退款金額: ${result.result_object.debit_amount}</p>
+                    <p>退還折抵金額: ${result.result_object.redeem_amount}</p>
+                    <p>退款時間: ${result.result_object.refund_time}</p>
+                `;
+            } else {
+                resultElement.innerHTML = `<span class="error">錯誤：${result.message}</span>`;
+            }
+        }
+
+        // 支付按鈕
+        function startPayment(payment_url) {
+            if (payment_url) {
+                if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
+                    // 移動設備
+                    window.location.href = payment_url;
+                } else {
+                    // 桌面設備，顯示QR碼（已經在創建訂單時顯示了）
+                    alert('請使用街口支付 APP 掃描 QR 碼進行支付');
+                }
+            } else {
+                alert('無效的支付 URL');
+            }
+        }
+        // 檢查 URL 參數以顯示支付結果
+        function checkPaymentResult() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const status = urlParams.get('status');
+            const orderId = urlParams.get('platform_order_id');
+            
+            if (status && orderId) {
+                const resultElement = document.getElementById('paymentResult');
+                if (status === '0') {
+                    resultElement.innerHTML = `<span class="success">訂單 ${orderId} 支付成功！</span>`;
+                } else {
+                    resultElement.innerHTML = `<span class="error">訂單 ${orderId} 支付失敗。狀態碼：${status}</span>`;
+                }
+            }
+        }
+
+        // 頁面加載時檢查支付結果
+        window.onload = checkPaymentResult;
+    </script>
+</body>
+</html>
